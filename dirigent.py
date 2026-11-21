@@ -10,15 +10,19 @@ Aufruf:
   dirigent.py log       das Log fortlaufend anzeigen (Strg+C beendet nur die Anzeige)
 
 Ablauf eines Laufs:
-  1. Lesesaal-Tagesbetrieb ohne Aufarbeitung: neue Folgen, Szene, Termine, Seite, Threads,
-     Direktnachricht. Das kommt immer zuerst, weil es täglich fertig sein soll.
-  2. Danach die Bestände aus [aufgaben] reihe im Wechsel, je höchstens [zeit] block_minuten:
+  1. Neue Kursaufnahmen mit noScribe transkribieren (ohne Fenster, Einstellungen aus
+     [kursaufnahmen]). Das kommt zuerst, weil die Abschrift am Tag nach dem Kurs gebraucht wird.
+  2. Lesesaal-Tagesbetrieb ohne Aufarbeitung: neue Folgen, Szene, Termine, Seite, Threads,
+     Direktnachricht. Das soll täglich fertig sein.
+  3. Danach die Bestände aus [aufgaben] reihe im Wechsel, je höchstens [zeit] block_minuten:
        abschrift      Zettelkasten: Bilder abschreiben (abschreiben.py)
        anreicherung   Zettelkasten: Titel, Bereich, Hashtags, Lesefassung (anreichern.py)
        aufarbeitung   Lesesaal: ältere Folgen ins Archiv (tagesbetrieb.py --nur-archiv)
-       videos         Kursaufnahmen verkleinern (ffmpeg, HEVC über die Grafikkarte)
+       kursaufnahmen  je Aufnahme: transkribieren, falls noch nötig; verkleinern (ffmpeg, HEVC
+                      über die Grafikkarte); Original mit Prüfsumme auf die Archivplatte kopieren
+                      und erst nach bestandener Prüfung auf der Datenplatte löschen
      Eine Aufgabe ohne offene Arbeit wird übersprungen. Sind alle leer, endet der Lauf.
-  3. Ab [zeit] bis beginnt nichts Neues mehr. Der laufende Schritt wird noch fertig.
+  4. Ab [zeit] bis beginnt nichts Neues mehr. Der laufende Schritt wird noch fertig.
 
 Der Dirigent fährt den Rechner nie herunter und startet nichts von selbst. Jede Aufgabe
 nutzt ihre eigene Sperre, Stoppdatei und Temperaturpause. Die Ausgaben der Aufgaben landen
@@ -27,9 +31,11 @@ je Tag und Aufgabe unter DATEN/logs/, die Zeilen des Dirigenten in DATEN/dirigen
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -56,8 +62,14 @@ class Dirigent:
         self.zustand_pfad = self.daten / "zustand.json"
         self.lesesaal = Path(konf["lesesaal"]["ordner"])
         self.zettelkasten = Path(konf["zettelkasten"]["ordner"])
-        self.video_quelle = Path(konf["videos"]["quelle"])
-        self.video_ziel = Path(konf["videos"]["ziel"])
+        kurs = konf["kursaufnahmen"]
+        self.video_quelle = Path(kurs["quelle"])
+        self.video_ziel = Path(kurs["klein"])
+        self.video_archiv = Path(kurs["archiv"])
+        self.archiv_platte = Path(kurs["archiv_platte"])
+        self.transkribieren_ab = kurs.get("transkribieren_ab", "")
+        self.noscribe = Path(kurs["noscribe"])
+        self.noscribe_optionen = list(kurs.get("noscribe_optionen", []))
 
     # Hilfen
 
@@ -110,17 +122,30 @@ class Dirigent:
         elif name == "aufarbeitung":
             text = self.ausgabe([self.python(self.lesesaal), "tagesbetrieb.py", "--stand"], self.lesesaal)
             treffer = re.search(r"Aufarbeitung \(A\): \d+ erledigt, (\d+) offen", text)
-        elif name == "videos":
-            return len(self.offene_videos())
+        elif name == "kursaufnahmen":
+            return len(self.aufnahmen())
         else:
             return None
         return int(treffer.group(1)) if treffer else None
 
-    def offene_videos(self):
+    def aufnahmen(self):
+        """Originale auf der Datenplatte; jede ist offen, bis sie im Archiv liegt."""
         if not self.video_quelle.exists():
             return []
-        quellen = sorted(p for p in self.video_quelle.iterdir() if p.suffix.lower() in (".mkv", ".mp4"))
-        return [p for p in quellen if not (self.video_ziel / f"{p.stem}.mkv").exists()]
+        return sorted(p for p in self.video_quelle.iterdir()
+                      if p.suffix.lower() in (".mkv", ".mp4") and ".teil" not in p.name)
+
+    def transkript(self, aufnahme):
+        return aufnahme.with_suffix(".html")
+
+    def braucht_transkript(self, aufnahme):
+        """Ab dem Datum in [kursaufnahmen] transkribieren_ab; ältere Aufnahmen sind schon von Hand erledigt."""
+        if self.transkript(aufnahme).exists():
+            return False
+        return aufnahme.name[:10] >= self.transkribieren_ab if self.transkribieren_ab else True
+
+    def klein(self, aufnahme):
+        return self.video_ziel / f"{aufnahme.stem}.mkv"
 
     # Aufgaben
 
@@ -146,43 +171,120 @@ class Dirigent:
             code, sek = self.aufgabe_ausfuehren(
                 name, [self.python(self.lesesaal), "tagesbetrieb.py", "--nur-archiv", "--archiv-bis", f"{ende:%H:%M}"],
                 self.lesesaal)
-        elif name == "videos":
-            code, sek = self.videos(ende)
+        elif name == "kursaufnahmen":
+            code, sek = self.kursaufnahmen(ende)
         else:
             self.log(f"  unbekannte Aufgabe {name}, übersprungen")
             return 0.0
         self.log(f"  {name} fertig nach {sek / 60:.0f} min, Exit-Code {code}")
         return sek
 
-    def videos(self, ende):
-        """Verkleinert Aufnahmen, bis die Zeit um ist; eine angefangene Datei wird fertig."""
-        beginn = time.monotonic()
+    def transkribieren(self, aufnahme):
+        """noScribe ohne Fenster; das Ergebnis erhält seinen Namen erst, wenn es vollständig ist."""
+        teil = aufnahme.with_name(f"{aufnahme.stem}.teil.html")
+        self.log(f"  transkribiere {aufnahme.name}")
+        code, sek = self.aufgabe_ausfuehren("kursaufnahmen", [
+            str(self.noscribe / "venv" / "bin" / "python"), "-m", "noScribe", str(aufnahme), str(teil), "--no-gui",
+            *self.noscribe_optionen], self.noscribe)
+        if code != 0 or not teil.exists() or teil.stat().st_size < 2000:
+            self.log(f"  Transkription fehlgeschlagen: {aufnahme.name}, Exit-Code {code}")
+            return False
+        teil.rename(self.transkript(aufnahme))
+        self.log(f"  Transkript fertig nach {sek / 60:.0f} min: {self.transkript(aufnahme).name}")
+        return True
+
+    def neue_transkripte(self, bis):
+        """Schritt 1 des Laufs: alle Aufnahmen ohne Transkript, ohne Blockgrenze, aber nicht nach bis beginnen."""
+        for aufnahme in self.aufnahmen():
+            if self.gestoppt() or datetime.now() >= bis:
+                return
+            if self.braucht_transkript(aufnahme):
+                self.zustand(aufgabe="transkription", seit=datetime.now().isoformat(timespec="seconds"),
+                             block_bis="")
+                self.transkribieren(aufnahme)
+
+    def verkleinern(self, aufnahme):
+        ziel = self.klein(aufnahme)
+        teil = self.video_ziel / f"{aufnahme.stem}.teil.mkv"
         self.video_ziel.mkdir(parents=True, exist_ok=True)
-        code = 0
-        for quelle in self.offene_videos():
-            if self.gestoppt() or datetime.now() >= ende:
-                break
-            ziel = self.video_ziel / f"{quelle.stem}.mkv"
-            teil = self.video_ziel / f"{quelle.stem}.mkv.teil.mkv"
-            self.log(f"  verkleinere {quelle.name}")
-            code, _ = self.aufgabe_ausfuehren("videos", [
-                "ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error", "-i", str(quelle),
-                "-map", "0:v:0", "-map", "0:a:0", "-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr",
-                "-cq", "30", "-b:v", "0", "-r", "15", "-c:a", "aac", "-b:a", "96k", str(teil)], self.video_ziel)
-            if code != 0:
-                self.log(f"  Fehler bei {quelle.name}, Exit-Code {code}")
-                continue
-            dq, dz = self.laenge(quelle), self.laenge(teil)
-            if dz is None:
-                self.log(f"  Ergebnis ohne lesbare Länge: {quelle.name}")
-                continue
-            if dq is not None and abs(dq - dz) > 5:
-                self.log(f"  Länge weicht ab ({dq:.0f} s / {dz:.0f} s): {quelle.name}")
-                continue
-            teil.rename(ziel)
-            self.log(f"  fertig: {ziel.name}, {ziel.stat().st_size / 1e6:.0f} MB, {dz / 60:.0f} min"
-                     + ("" if dq is not None else ", Original ohne Längenangabe"))
-        return code, time.monotonic() - beginn
+        self.log(f"  verkleinere {aufnahme.name}")
+        code, _ = self.aufgabe_ausfuehren("kursaufnahmen", [
+            "ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error", "-i", str(aufnahme),
+            "-map", "0:v:0", "-map", "0:a:0", "-c:v", "hevc_nvenc", "-preset", "p5", "-rc", "vbr",
+            "-cq", "30", "-b:v", "0", "-r", "15", "-c:a", "aac", "-b:a", "96k", str(teil)], self.video_ziel)
+        if code != 0:
+            self.log(f"  Fehler beim Verkleinern von {aufnahme.name}, Exit-Code {code}")
+            return False
+        dq, dz = self.laenge(aufnahme), self.laenge(teil)
+        if dz is None:
+            self.log(f"  Ergebnis ohne lesbare Länge: {aufnahme.name}")
+            return False
+        if dq is not None and abs(dq - dz) > 5:
+            self.log(f"  Länge weicht ab ({dq:.0f} s / {dz:.0f} s): {aufnahme.name}")
+            return False
+        teil.rename(ziel)
+        self.log(f"  verkleinert: {ziel.name}, {ziel.stat().st_size / 1e6:.0f} MB, {dz / 60:.0f} min"
+                 + ("" if dq is not None else ", Original ohne Längenangabe"))
+        return True
+
+    @staticmethod
+    def pruefsumme(pfad):
+        h = hashlib.sha256()
+        with open(pfad, "rb") as datei:
+            while block := datei.read(16 * 1024 * 1024):
+                h.update(block)
+        return h.hexdigest()
+
+    def archivieren(self, aufnahme):
+        """Original auf die Archivplatte; gelöscht wird es erst, wenn die Kopie dieselbe Prüfsumme hat."""
+        if not os.path.ismount(self.archiv_platte):
+            self.log(f"  Archivplatte {self.archiv_platte} nicht eingehängt, {aufnahme.name} bleibt liegen")
+            return False
+        self.video_archiv.mkdir(parents=True, exist_ok=True)
+        groesse = aufnahme.stat().st_size
+        if shutil.disk_usage(self.video_archiv).free < groesse + 5e9:
+            self.log(f"  Archivplatte voll, {aufnahme.name} bleibt liegen")
+            return False
+        ziel = self.video_archiv / aufnahme.name
+        teil = self.video_archiv / f"{aufnahme.stem}.teil{aufnahme.suffix}"
+        self.log(f"  archiviere {aufnahme.name} ({groesse / 1e9:.1f} GB)")
+        beginn = time.monotonic()
+        try:
+            shutil.copyfile(aufnahme, teil)
+            os.sync()
+            quelle_summe, kopie_summe = self.pruefsumme(aufnahme), self.pruefsumme(teil)
+        except OSError as fehler:
+            self.log(f"  Kopieren fehlgeschlagen: {fehler}")
+            teil.unlink(missing_ok=True)
+            return False
+        if quelle_summe != kopie_summe:
+            self.log(f"  Prüfsumme weicht ab, Kopie verworfen, Original bleibt: {aufnahme.name}")
+            teil.unlink(missing_ok=True)
+            return False
+        teil.rename(ziel)
+        (self.video_archiv / f"{aufnahme.name}.sha256").write_text(f"{kopie_summe}  {aufnahme.name}\n")
+        if self.transkript(aufnahme).exists():
+            shutil.copyfile(self.transkript(aufnahme), self.video_archiv / self.transkript(aufnahme).name)
+        aufnahme.unlink()
+        self.log(f"  archiviert und geprüft nach {(time.monotonic() - beginn) / 60:.0f} min, Original gelöscht")
+        return True
+
+    def kursaufnahmen(self, ende):
+        """Je Aufnahme der Reihe nach: transkribieren, verkleinern, archivieren. Ein begonnener Schritt wird fertig."""
+        beginn = time.monotonic()
+        for aufnahme in self.aufnahmen():
+            for schritt in ("transkript", "klein", "archiv"):
+                if self.gestoppt() or datetime.now() >= ende:
+                    return 0, time.monotonic() - beginn
+                if schritt == "transkript" and self.braucht_transkript(aufnahme):
+                    if not self.transkribieren(aufnahme):
+                        break
+                elif schritt == "klein" and not self.klein(aufnahme).exists():
+                    if not self.verkleinern(aufnahme):
+                        break
+                elif schritt == "archiv":
+                    self.archivieren(aufnahme)
+        return 0, time.monotonic() - beginn
 
     def laenge(self, pfad):
         text = self.ausgabe(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
@@ -199,6 +301,7 @@ class Dirigent:
         self.zustand(pid=os.getpid(), beginn=datetime.now().isoformat(timespec="seconds"),
                      bis=bis.isoformat(timespec="minutes"), aufgabe="", seit="", block_bis="")
         self.log(f"===== Dirigent, bis {bis:%H:%M}")
+        self.neue_transkripte(bis)
         if not ohne_lesesaal and not self.gestoppt() and datetime.now() < bis:
             self.lesesaal_tagesbetrieb()
         block = timedelta(minutes=int(self.konf["zeit"].get("block_minuten", 90)))
@@ -290,6 +393,11 @@ def befehl_stand(dirigent, _args):
     for name in dirigent.konf["aufgaben"]["reihe"]:
         offen = dirigent.offen(name)
         print(f"  {name:<14} {'?' if offen is None else offen}")
+        if name == "kursaufnahmen":
+            auf = dirigent.aufnahmen()
+            print(f"    davon ohne Transkript {sum(dirigent.braucht_transkript(x) for x in auf)}, "
+                  f"noch nicht verkleinert {sum(not dirigent.klein(x).exists() for x in auf)}, "
+                  f"Archivplatte {'bereit' if os.path.ismount(dirigent.archiv_platte) else 'nicht eingehängt'}")
     if dirigent.log_pfad.exists():
         print("\nLetzte Zeilen:")
         for zeile in dirigent.log_pfad.read_text(encoding="utf-8").splitlines()[-6:]:
@@ -303,6 +411,8 @@ def befehl_stopp(dirigent, _args):
     dirigent.stoppdatei.touch()
     z = json.loads(dirigent.zustand_pfad.read_text(encoding="utf-8")) if dirigent.zustand_pfad.exists() else {}
     aufgabe = z.get("aufgabe", "")
+    if aufgabe in ("transkription", "kursaufnahmen"):
+        print("Eine laufende Transkription oder Kopie lässt sich nicht unterbrechen, sie wird fertig.")
     if aufgabe in ("lesesaal", "aufarbeitung"):
         (Path(dirigent.konf["lesesaal"]["daten"]) / "stopp").touch()
     elif aufgabe in ("abschrift", "anreicherung"):

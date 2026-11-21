@@ -15,10 +15,17 @@ daten = "/mnt/daten/lesesaal"
 ordner = "/home/apollon/Arbeitsmappe_Lokal/Code/zettelkasten"
 daten = "/mnt/daten/zettelkasten"
 
-[videos]
-quelle = "/mnt/daten/bilanzbuchhalter/video"
-ziel = "/mnt/daten/bilanzbuchhalter/video_klein"
+[kursaufnahmen]
+quelle = "/mnt/daten/bilanzbuchhalter/video"           # OBS legt die Aufnahmen hier ab
+klein = "/mnt/daten/bilanzbuchhalter/video_klein"      # verkleinerte Fassung zum Nachschauen
+archiv = "/mnt/archiv/bilanzbuchhalter/video"          # Originale, Prüfsummen und Kopien der Transkripte
+archiv_platte = "/mnt/archiv"                          # ohne eingehängte Platte bleibt das Original liegen
+transkribieren_ab = "2026-11-17"                       # ältere Aufnahmen sind schon von Hand transkribiert
+noscribe = "/home/apollon/opt/noScribe"
+# dieselben Einstellungen wie bisher im Fenster von noScribe
+noscribe_optionen = ["--language", "de", "--model", "precise", "--speaker-detection", "auto",
+                     "--overlapping", "--timestamps", "--disfluencies", "--pause", "1sec+"]
 
 [aufgaben]
 # Reihenfolge im Wechsel; eine Aufgabe ohne offene Arbeit wird übersprungen
-reihe = ["abschrift", "anreicherung", "aufarbeitung", "videos"]
+reihe = ["abschrift", "anreicherung", "aufarbeitung", "kursaufnahmen"]

@@ -13,15 +13,18 @@ Der Code ist mit Hilfe eines KI-Assistenten entstanden und wird von Hand geteste
 
 ## Ablauf
 
-1. Lesesaal-Tagesbetrieb ohne Aufarbeitung: neue Folgen, Szene, Termine, Seite, Threads, Direktnachricht.
-2. Danach die Bestände im Wechsel, je höchstens `[zeit] block_minuten`:
+1. Neue Kursaufnahmen mit [noScribe](https://github.com/kaixxx/noScribe) transkribieren, ohne Fenster und mit denselben Einstellungen wie von Hand. Das kommt zuerst, damit die Abschrift am Tag nach dem Kurs vorliegt.
+2. Lesesaal-Tagesbetrieb ohne Aufarbeitung: neue Folgen, Szene, Termine, Seite, Threads, Direktnachricht.
+3. Danach die Bestände im Wechsel, je höchstens `[zeit] block_minuten`:
 
 | Aufgabe | Was | Aufruf |
 |---|---|---|
 | abschrift | Bilder aus den Mastodon-Archiven abschreiben | `zettelkasten/abschreiben.py --minuten N` |
 | anreicherung | Titel, Bereich, Hashtags und Lesefassung je Einheit | `zettelkasten/anreichern.py --minuten N` |
 | aufarbeitung | ältere Folgen ins Archiv des Lesesaals | `lesesaal/tagesbetrieb.py --nur-archiv --archiv-bis HH:MM` |
-| videos | Kursaufnahmen verkleinern, HEVC über die Grafikkarte, 15 Bilder je Sekunde | `ffmpeg` mit `hevc_nvenc` |
+| kursaufnahmen | je Aufnahme: transkribieren, falls noch nötig; verkleinern (HEVC über die Grafikkarte, 15 Bilder je Sekunde); Original auf die Archivplatte | noScribe, `ffmpeg` mit `hevc_nvenc` |
+
+Das Original einer Kursaufnahme wird auf der Datenplatte erst gelöscht, wenn die Kopie auf der Archivplatte dieselbe SHA-256-Prüfsumme hat. Die Prüfsumme liegt als `.sha256` daneben, ebenso eine Kopie des Transkripts. Ist die Archivplatte nicht eingehängt oder zu voll, bleibt das Original liegen. Halbfertige Ergebnisse tragen `.teil` im Namen und erhalten ihren endgültigen Namen erst, wenn sie vollständig sind.
 
 Eine Aufgabe ohne offene Arbeit wird übersprungen. Sind alle leer, endet der Lauf. Kommt zwei Runden lang keine Aufgabe voran, etwa weil etwas anderes die Grafikkarten belegt, endet er ebenfalls.
 
@@ -41,7 +44,7 @@ Der Lauf geht weiter, wenn das Terminal geschlossen wird. Die Zeilen des Dirigen
 
 ## Voraussetzungen
 
-Python 3.11 oder neuer, nur die Standardbibliothek. Lesesaal und Zettelkasten mit ihren eigenen `.venv`, ffmpeg mit `hevc_nvenc`. Pfade, Uhrzeit, Blocklänge und Reihenfolge stehen in `config.toml`.
+Python 3.11 oder neuer, nur die Standardbibliothek. Lesesaal und Zettelkasten mit ihren eigenen `.venv`, noScribe ab Version 0.7 (Kommandozeile mit `--no-gui`), ffmpeg mit `hevc_nvenc`. Pfade, Uhrzeit, Blocklänge und Reihenfolge stehen in `config.toml`.
 
 ## Lizenz
 
