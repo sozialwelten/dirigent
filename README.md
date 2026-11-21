@@ -24,7 +24,7 @@ Der Code ist mit Hilfe eines KI-Assistenten entstanden und wird von Hand geteste
 | aufarbeitung | ältere Folgen ins Archiv des Lesesaals | `lesesaal/tagesbetrieb.py --nur-archiv --archiv-bis HH:MM` |
 | kursaufnahmen | je Aufnahme: transkribieren, falls noch nötig; verkleinern (HEVC über die Grafikkarte, 15 Bilder je Sekunde); Original auf die Archivplatte | noScribe, `ffmpeg` mit `hevc_nvenc` |
 
-Aufnahme und Transkript liegen zusammen in einem Ordner. Das Original einer Kursaufnahme wird auf der Datenplatte erst gelöscht, wenn die Kopie auf der Archivplatte dieselbe SHA-256-Prüfsumme hat. Die Prüfsumme liegt als `.sha256` daneben, ebenso eine Kopie des Transkripts. Danach rückt die verkleinerte Fassung unter dem Namen des Originals an dessen Stelle, neben das Transkript. Ist die Archivplatte nicht eingehängt oder zu voll, bleibt das Original liegen. Halbfertige Ergebnisse tragen `.teil` im Namen und erhalten ihren endgültigen Namen erst, wenn sie vollständig sind.
+Aufnahme und Transkript liegen zusammen in einem Ordner. Steht das Aufnahmedatum im Kursplan (`kursplan.csv` mit Datum, Fach, Dozent und Namensteil), benennt der Dirigent Aufnahme und Transkript vor dem Transkribieren um, etwa von `2026-11-17_18-07.mkv` in `2026-11-17_Finanzmanagement_Hey.mkv`. Eine zweite Aufnahme desselben Abends bekommt `_2`. `dirigent.py umbenennen` zeigt, wie schon archivierte Aufnahmen heißen würden, mit `--ausfuehren` benennt es sie im Archiv und in `video/` gemeinsam um. Das Original einer Kursaufnahme wird auf der Datenplatte erst gelöscht, wenn die Kopie auf der Archivplatte dieselbe SHA-256-Prüfsumme hat. Die Prüfsumme liegt als `.sha256` daneben, ebenso eine Kopie des Transkripts. Danach rückt die verkleinerte Fassung unter dem Namen des Originals an dessen Stelle, neben das Transkript. Ist die Archivplatte nicht eingehängt oder zu voll, bleibt das Original liegen. Halbfertige Ergebnisse tragen `.teil` im Namen und erhalten ihren endgültigen Namen erst, wenn sie vollständig sind.
 
 Eine Aufgabe ohne offene Arbeit wird übersprungen. Sind alle leer, endet der Lauf. Kommt zwei Runden lang keine Aufgabe voran, etwa weil etwas anderes die Grafikkarten belegt, endet er ebenfalls.
 
@@ -38,6 +38,7 @@ dirigent.py start --ohne-lesesaal
 dirigent.py stand                läuft er, was ist dran, was ist offen (auch ohne Befehl)
 dirigent.py stopp                nach dem laufenden Schritt anhalten
 dirigent.py log                  das Log fortlaufend anzeigen
+dirigent.py umbenennen           archivierte Kursaufnahmen nach dem Kursplan benennen (--ausfuehren)
 ```
 
 Der Lauf geht weiter, wenn das Terminal geschlossen wird. Die Zeilen des Dirigenten stehen in `DATEN/dirigent.log`, die Ausgaben der Aufgaben je Tag und Aufgabe in `DATEN/logs/`.

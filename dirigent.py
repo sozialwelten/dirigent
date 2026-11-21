@@ -8,9 +8,11 @@ Aufruf:
   dirigent.py stand     zeigen, ob er läuft, was gerade dran ist und wie viel noch offen ist
   dirigent.py stopp     nach dem laufenden Schritt anhalten; keine neue Aufgabe mehr
   dirigent.py log       das Log fortlaufend anzeigen (Strg+C beendet nur die Anzeige)
+  dirigent.py umbenennen [--ausfuehren]
+                        archivierte Kursaufnahmen nach dem Kursplan benennen (ohne Schalter nur anzeigen)
 
 Ablauf eines Laufs:
-  1. Neue Kursaufnahmen mit noScribe transkribieren (ohne Fenster, Einstellungen aus
+  1. Neue Kursaufnahmen nach dem Kursplan benennen (Datum_Fach_Dozent) und mit noScribe transkribieren (ohne Fenster, Einstellungen aus
      [kursaufnahmen]). Das kommt zuerst, weil die Abschrift am Tag nach dem Kurs gebraucht wird.
   2. Lesesaal-Tagesbetrieb ohne Aufarbeitung: neue Folgen, Szene, Termine, Seite, Threads,
      Direktnachricht. Das soll täglich fertig sein.
@@ -31,6 +33,7 @@ je Tag und Aufgabe unter DATEN/logs/, die Zeilen des Dirigenten in DATEN/dirigen
 """
 
 import argparse
+import csv
 import fcntl
 import hashlib
 import json
@@ -71,6 +74,7 @@ class Dirigent:
         self.transkribieren_ab = kurs.get("transkribieren_ab", "")
         self.noscribe = Path(kurs["noscribe"])
         self.noscribe_optionen = list(kurs.get("noscribe_optionen", []))
+        self.kursplan_pfad = Path(kurs["kursplan"]) if kurs.get("kursplan") else None
 
     # Hilfen
 
@@ -198,6 +202,76 @@ class Dirigent:
         self.log(f"  {name} fertig nach {sek / 60:.0f} min, Exit-Code {code}")
         return sek
 
+    # Namen nach dem Kursplan
+
+    def kursplan(self):
+        """Datum -> Namensteil, etwa "2026-11-17" -> "Finanzmanagement_Hey"."""
+        if not self.kursplan_pfad or not self.kursplan_pfad.exists():
+            return {}
+        zeilen = [z for z in self.kursplan_pfad.read_text(encoding="utf-8").splitlines() if z and not z.startswith("#")]
+        return {z["datum"]: z["kurz"] for z in csv.DictReader(zeilen, delimiter=";") if z.get("kurz")}
+
+    def namensplan(self, dateien):
+        """Gewünschter Name je Datei: Datum, Fach und Dozent; eine zweite Aufnahme desselben Abends bekommt _2."""
+        plan = self.kursplan()
+        je_tag = {}
+        for datei in sorted(dateien, key=lambda p: p.name):
+            if re.match(r"\d{4}-\d{2}-\d{2}_", datei.name) and datei.name[:10] in plan:
+                je_tag.setdefault(datei.name[:10], []).append(datei)
+        neu = {}
+        for tag, liste in je_tag.items():
+            for nr, datei in enumerate(liste, 1):
+                neu[datei] = f"{tag}_{plan[tag]}" + (f"_{nr}" if nr > 1 else "")
+        return neu
+
+    def benennen(self):
+        """Neue Originale und ihr Transkript in video/ nach dem Kursplan benennen, solange sie nicht archiviert sind."""
+        for datei, stamm in self.namensplan(self.aufnahmen()).items():
+            if datei.stem == stamm:
+                continue
+            ziel = datei.with_name(stamm + datei.suffix)
+            if ziel.exists() or ziel.with_suffix(".html").exists():
+                self.log(f"  {ziel.name} gibt es schon, {datei.name} bleibt, wie es ist")
+                continue
+            if self.transkript(datei).exists():
+                self.transkript(datei).rename(ziel.with_suffix(".html"))
+            datei.rename(ziel)
+            self.log(f"  umbenannt: {datei.name} -> {ziel.name}")
+
+    def umbenennen_bestand(self, ausfuehren):
+        """Schon archivierte Aufnahmen nach dem Kursplan umbenennen: im Archiv (Original, Prüfsumme,
+        Transkript) und in video/ (kleine Fassung, Transkript). Ohne ausfuehren nur anzeigen."""
+        summen = sorted(self.video_archiv.glob("*.sha256")) if self.video_archiv.exists() else []
+        originale = [self.video_archiv / s.name.removesuffix(".sha256") for s in summen]
+        plan = self.namensplan(originale)
+        aenderungen = [(o, stamm) for o, stamm in plan.items() if o.stem != stamm]
+        for original, stamm in aenderungen:
+            print(f"{original.name:32} -> {stamm}{original.suffix}")
+            if not ausfuehren:
+                continue
+            paare = [
+                (original, original.with_name(stamm + original.suffix)),
+                (original.with_suffix(".html"), original.with_name(stamm + ".html")),
+                (self.video_quelle / (original.stem + ".mkv"), self.video_quelle / (stamm + ".mkv")),
+                (self.video_quelle / (original.stem + ".html"), self.video_quelle / (stamm + ".html")),
+                (self.video_ziel / (original.stem + ".mkv"), self.video_ziel / (stamm + ".mkv")),
+            ]
+            if any(neu.exists() for alt, neu in paare if alt.exists()):
+                print("  Ziel gibt es schon, übersprungen")
+                continue
+            for alt, neu in paare:
+                if alt.exists():
+                    alt.rename(neu)
+            summe_alt = self.video_archiv / f"{original.name}.sha256"
+            summe_neu = self.video_archiv / f"{stamm}{original.suffix}.sha256"
+            wert = summe_alt.read_text().split()[0]
+            summe_neu.write_text(f"{wert}  {stamm}{original.suffix}\n")
+            summe_alt.unlink()
+        if not aenderungen:
+            print("Alles schon nach dem Kursplan benannt.")
+        elif not ausfuehren:
+            print(f"\n{len(aenderungen)} Aufnahmen. Mit --ausfuehren umbenennen.")
+
     def transkribieren(self, aufnahme):
         """noScribe ohne Fenster; das Ergebnis erhält seinen Namen erst, wenn es vollständig ist."""
         teil = aufnahme.with_name(f"{aufnahme.stem}.teil.html")
@@ -292,6 +366,7 @@ class Dirigent:
     def kursaufnahmen(self, ende):
         """Je Aufnahme der Reihe nach: transkribieren, verkleinern, archivieren. Ein begonnener Schritt wird fertig."""
         beginn = time.monotonic()
+        self.benennen()
         for aufnahme in self.aufnahmen():
             for schritt in ("transkript", "klein", "archiv"):
                 if self.gestoppt() or datetime.now() >= ende:
@@ -322,6 +397,7 @@ class Dirigent:
                      bis=bis.isoformat(timespec="minutes"), aufgabe="", seit="", block_bis="")
         self.log(f"===== Dirigent, bis {bis:%H:%M}")
         self.einsortieren()
+        self.benennen()
         self.neue_transkripte(bis)
         if not ohne_lesesaal and not self.gestoppt() and datetime.now() < bis:
             self.lesesaal_tagesbetrieb()
@@ -441,6 +517,12 @@ def befehl_stopp(dirigent, _args):
     print(f"Stoppsignal gesetzt. {aufgabe or 'Der laufende Schritt'} wird noch fertig, dann endet der Dirigent.")
 
 
+def befehl_umbenennen(dirigent, args):
+    if laeuft(dirigent):
+        raise SystemExit("Der Dirigent läuft gerade. Erst nach seinem Ende umbenennen.")
+    dirigent.umbenennen_bestand(args.ausfuehren)
+
+
 def befehl_log(dirigent, _args):
     dirigent.log_pfad.touch()
     os.execvp("tail", ["tail", "-n", "30", "-f", str(dirigent.log_pfad)])
@@ -457,10 +539,12 @@ def main():
     unter.add_parser("stand", help="zeigen, was läuft und was offen ist")
     unter.add_parser("stopp", help="nach dem laufenden Schritt anhalten")
     unter.add_parser("log", help="das Log fortlaufend anzeigen")
+    umb = unter.add_parser("umbenennen", help="archivierte Kursaufnahmen nach dem Kursplan benennen")
+    umb.add_argument("--ausfuehren", action="store_true", help="wirklich umbenennen, sonst nur anzeigen")
     args = parser.parse_args()
     dirigent = Dirigent(lade_konfiguration())
     {"start": befehl_start, "lauf": befehl_lauf, "stand": befehl_stand, "stopp": befehl_stopp,
-     "log": befehl_log, None: befehl_stand}[args.befehl](dirigent, args)
+     "log": befehl_log, "umbenennen": befehl_umbenennen, None: befehl_stand}[args.befehl](dirigent, args)
 
 
 if __name__ == "__main__":
