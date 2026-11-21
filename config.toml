@@ -1,0 +1,24 @@
+# Einstellungen für medienlabor
+
+[pfade]
+daten = "/mnt/daten/dirigent"          # Zustand, Log und Stoppdatei des Dirigenten
+
+[zeit]
+bis = "17:30"                          # ab dieser Uhrzeit beginnt keine neue Aufgabe mehr
+block_minuten = 90                     # so lange arbeitet eine Aufgabe, bevor die nächste drankommt
+
+[lesesaal]
+ordner = "/home/apollon/Arbeitsmappe_Lokal/Code/lesesaal"
+daten = "/mnt/daten/lesesaal"
+
+[zettelkasten]
+ordner = "/home/apollon/Arbeitsmappe_Lokal/Code/zettelkasten"
+daten = "/mnt/daten/zettelkasten"
+
+[videos]
+quelle = "/mnt/daten/bilanzbuchhalter/video"
+ziel = "/mnt/daten/bilanzbuchhalter/video_klein"
+
+[aufgaben]
+# Reihenfolge im Wechsel; eine Aufgabe ohne offene Arbeit wird übersprungen
+reihe = ["abschrift", "anreicherung", "aufarbeitung", "videos"]
