@@ -20,7 +20,8 @@ Ablauf eines Laufs:
        aufarbeitung   Lesesaal: ältere Folgen ins Archiv (tagesbetrieb.py --nur-archiv)
        kursaufnahmen  je Aufnahme: transkribieren, falls noch nötig; verkleinern (ffmpeg, HEVC
                       über die Grafikkarte); Original mit Prüfsumme auf die Archivplatte kopieren
-                      und erst nach bestandener Prüfung auf der Datenplatte löschen
+                      und erst nach bestandener Prüfung auf der Datenplatte löschen. Danach liegt
+                      die verkleinerte Fassung unter dem Namen des Originals neben dem Transkript
      Eine Aufgabe ohne offene Arbeit wird übersprungen. Sind alle leer, endet der Lauf.
   4. Ab [zeit] bis beginnt nichts Neues mehr. Der laufende Schritt wird noch fertig.
 
@@ -128,12 +129,30 @@ class Dirigent:
             return None
         return int(treffer.group(1)) if treffer else None
 
+    def archiviert(self, aufnahme):
+        return (self.video_archiv / f"{aufnahme.name}.sha256").exists()
+
     def aufnahmen(self):
-        """Originale auf der Datenplatte; jede ist offen, bis sie im Archiv liegt."""
+        """Originale auf der Datenplatte; jede ist offen, bis sie im Archiv liegt.
+
+        Nach dem Archivieren liegt unter demselben Namen die verkleinerte Fassung in video/, neben dem
+        Transkript. Daran, dass im Archiv eine Prüfsumme zu diesem Namen liegt, ist sie zu erkennen."""
         if not self.video_quelle.exists():
             return []
         return sorted(p for p in self.video_quelle.iterdir()
-                      if p.suffix.lower() in (".mkv", ".mp4") and ".teil" not in p.name)
+                      if p.suffix.lower() in (".mkv", ".mp4") and ".teil" not in p.name and not self.archiviert(p))
+
+    def einsortieren(self):
+        """Verkleinerte Fassungen archivierter Aufnahmen neben ihr Transkript in video/ legen."""
+        if not self.video_archiv.exists() or not self.video_ziel.exists():
+            return
+        for summe in sorted(self.video_archiv.glob("*.sha256")):
+            original = self.video_quelle / summe.name.removesuffix(".sha256")
+            klein = self.video_ziel / f"{original.stem}.mkv"
+            ziel = original.with_suffix(".mkv")
+            if klein.exists() and not ziel.exists() and not original.exists():
+                shutil.move(klein, ziel)
+                self.log(f"  verkleinerte Fassung nach {ziel}")
 
     def transkript(self, aufnahme):
         return aufnahme.with_suffix(".html")
@@ -267,6 +286,7 @@ class Dirigent:
             shutil.copyfile(self.transkript(aufnahme), self.video_archiv / self.transkript(aufnahme).name)
         aufnahme.unlink()
         self.log(f"  archiviert und geprüft nach {(time.monotonic() - beginn) / 60:.0f} min, Original gelöscht")
+        self.einsortieren()
         return True
 
     def kursaufnahmen(self, ende):
@@ -301,6 +321,7 @@ class Dirigent:
         self.zustand(pid=os.getpid(), beginn=datetime.now().isoformat(timespec="seconds"),
                      bis=bis.isoformat(timespec="minutes"), aufgabe="", seit="", block_bis="")
         self.log(f"===== Dirigent, bis {bis:%H:%M}")
+        self.einsortieren()
         self.neue_transkripte(bis)
         if not ohne_lesesaal and not self.gestoppt() and datetime.now() < bis:
             self.lesesaal_tagesbetrieb()

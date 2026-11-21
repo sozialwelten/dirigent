@@ -16,8 +16,8 @@ ordner = "/home/apollon/Arbeitsmappe_Lokal/Code/zettelkasten"
 daten = "/mnt/daten/zettelkasten"
 
 [kursaufnahmen]
-quelle = "/mnt/daten/bilanzbuchhalter/video"           # OBS legt die Aufnahmen hier ab
-klein = "/mnt/daten/bilanzbuchhalter/video_klein"      # verkleinerte Fassung zum Nachschauen
+quelle = "/mnt/daten/bilanzbuchhalter/video"           # OBS legt die Aufnahmen hier ab, noScribe das Transkript daneben
+klein = "/mnt/daten/bilanzbuchhalter/video_klein"      # Zwischenablage; nach dem Archivieren kommt die kleine Fassung nach quelle
 archiv = "/mnt/archiv/bilanzbuchhalter/video"          # Originale, Prüfsummen und Kopien der Transkripte
 archiv_platte = "/mnt/archiv"                          # ohne eingehängte Platte bleibt das Original liegen
 transkribieren_ab = "2026-11-17"                       # ältere Aufnahmen sind schon von Hand transkribiert

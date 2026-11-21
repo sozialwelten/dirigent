@@ -24,7 +24,7 @@ Der Code ist mit Hilfe eines KI-Assistenten entstanden und wird von Hand geteste
 | aufarbeitung | ältere Folgen ins Archiv des Lesesaals | `lesesaal/tagesbetrieb.py --nur-archiv --archiv-bis HH:MM` |
 | kursaufnahmen | je Aufnahme: transkribieren, falls noch nötig; verkleinern (HEVC über die Grafikkarte, 15 Bilder je Sekunde); Original auf die Archivplatte | noScribe, `ffmpeg` mit `hevc_nvenc` |
 
-Das Original einer Kursaufnahme wird auf der Datenplatte erst gelöscht, wenn die Kopie auf der Archivplatte dieselbe SHA-256-Prüfsumme hat. Die Prüfsumme liegt als `.sha256` daneben, ebenso eine Kopie des Transkripts. Ist die Archivplatte nicht eingehängt oder zu voll, bleibt das Original liegen. Halbfertige Ergebnisse tragen `.teil` im Namen und erhalten ihren endgültigen Namen erst, wenn sie vollständig sind.
+Aufnahme und Transkript liegen zusammen in einem Ordner. Das Original einer Kursaufnahme wird auf der Datenplatte erst gelöscht, wenn die Kopie auf der Archivplatte dieselbe SHA-256-Prüfsumme hat. Die Prüfsumme liegt als `.sha256` daneben, ebenso eine Kopie des Transkripts. Danach rückt die verkleinerte Fassung unter dem Namen des Originals an dessen Stelle, neben das Transkript. Ist die Archivplatte nicht eingehängt oder zu voll, bleibt das Original liegen. Halbfertige Ergebnisse tragen `.teil` im Namen und erhalten ihren endgültigen Namen erst, wenn sie vollständig sind.
 
 Eine Aufgabe ohne offene Arbeit wird übersprungen. Sind alle leer, endet der Lauf. Kommt zwei Runden lang keine Aufgabe voran, etwa weil etwas anderes die Grafikkarten belegt, endet er ebenfalls.
 
