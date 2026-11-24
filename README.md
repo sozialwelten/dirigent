@@ -47,6 +47,16 @@ Der Lauf geht weiter, wenn das Terminal geschlossen wird. Die Zeilen des Dirigen
 
 Python 3.11 oder neuer, nur die Standardbibliothek. Lesesaal und Zettelkasten mit ihren eigenen `.venv`, noScribe ab Version 0.7 (Kommandozeile mit `--no-gui`), ffmpeg mit `hevc_nvenc`. Pfade, Uhrzeit, Blocklänge und Reihenfolge stehen in `config.toml`.
 
+## Ohne Archivplatte
+
+Die Kursaufnahmen brauchen die eingehängte Archivplatte. Nur dort liegen die Prüfsummen, an denen der Dirigent erkennt, dass eine Datei in `video/` schon die verkleinerte Fassung ist. Fehlt die Platte, lässt er die Kursaufnahmen ganz aus und warnt bei `dirigent start` und im Protokoll. Das Transkribieren neuer Aufnahmen zu Beginn des Laufs läuft trotzdem.
+
+## Lokale Einstellungen und Bestandsbericht
+
+Einstellungen, die nicht ins Repo gehören, etwa Pfade zu persönlichen Ordnern, stehen in `config.lokal.toml` neben der `config.toml`. Die Datei steht in der `.gitignore`. Ihre Abschnitte ergänzen die `config.toml`, gleiche Schlüssel überschreiben sie.
+
+Unter `[bericht]` steht dort `befehl`, eine Liste wie bei `subprocess`. Der Dirigent führt den Befehl zu Beginn jedes Laufs aus, etwa `ablage_bericht` aus dem Repo werkzeuge, das den Bestand der Ablageordner als Notiz in einen Obsidian-Vault schreibt. Die Ausgabe kommt ins Protokoll, ein Fehler hält den Lauf nicht auf.
+
 ## Lizenz
 
 GPL-3.0, siehe `LICENSE`.

@@ -30,3 +30,10 @@ noscribe_optionen = ["--language", "de", "--model", "precise", "--speaker-detect
 [aufgaben]
 # Reihenfolge im Wechsel; eine Aufgabe ohne offene Arbeit wird übersprungen
 reihe = ["abschrift", "anreicherung", "aufarbeitung", "kursaufnahmen"]
+
+# Einstellungen, die nicht ins Repo gehören, stehen in config.lokal.toml (in .gitignore).
+# Deren Abschnitte ergänzen diese Datei, gleiche Schlüssel überschreiben sie. Beispiel:
+#
+# [bericht]
+# # wird zu Beginn jedes Laufs ausgeführt, die Ausgabe kommt ins Protokoll
+# befehl = ["/home/NAME/bin/ablage_bericht", "--aus", "/pfad/zum/Vault/Bestand.md", "/mnt/daten"]

@@ -51,8 +51,20 @@ PROJEKT = Path(__file__).resolve().parent
 
 
 def lade_konfiguration():
+    """config.toml aus dem Repo, darüber die optionale config.lokal.toml für Einstellungen, die nicht ins Repo gehören.
+
+    Abschnitte der lokalen Datei ergänzen die der config.toml, gleiche Schlüssel überschreiben sie."""
     with open(PROJEKT / "config.toml", "rb") as datei:
-        return tomllib.load(datei)
+        konf = tomllib.load(datei)
+    lokal = PROJEKT / "config.lokal.toml"
+    if lokal.exists():
+        with open(lokal, "rb") as datei:
+            for abschnitt, werte in tomllib.load(datei).items():
+                if isinstance(werte, dict):
+                    konf.setdefault(abschnitt, {}).update(werte)
+                else:
+                    konf[abschnitt] = werte
+    return konf
 
 
 class Dirigent:
@@ -396,6 +408,23 @@ class Dirigent:
 
     # Lauf
 
+    def bestandsbericht(self):
+        """Zu Beginn eines Laufs den Befehl aus [bericht] befehl ausführen, etwa ablage_bericht (Repo werkzeuge).
+
+        Der Befehl steht in der Regel in config.lokal.toml, weil er Pfade enthält, die nicht ins Repo gehören.
+        Ein Fehler hier hält den Lauf nicht auf."""
+        befehl = self.konf.get("bericht", {}).get("befehl")
+        if not befehl:
+            return
+        try:
+            ergebnis = subprocess.run(befehl, capture_output=True, text=True, timeout=1800)
+        except (OSError, subprocess.TimeoutExpired) as fehler:
+            self.log(f"  Bestandsbericht fehlgeschlagen: {fehler}")
+            return
+        zeilen = (ergebnis.stdout + ergebnis.stderr).strip().splitlines() or [f"Exit-Code {ergebnis.returncode}"]
+        for zeile in zeilen:
+            self.log(f"  Bestandsbericht: {zeile}")
+
     def lauf(self, bis, ohne_lesesaal):
         self.stoppdatei.unlink(missing_ok=True)
         self.zustand(pid=os.getpid(), beginn=datetime.now().isoformat(timespec="seconds"),
@@ -403,6 +432,7 @@ class Dirigent:
         self.log(f"===== Dirigent, bis {bis:%H:%M}")
         if not os.path.ismount(self.archiv_platte):
             self.log(f"  Achtung: Archivplatte {self.archiv_platte} nicht eingehängt, Kursaufnahmen werden ausgelassen")
+        self.bestandsbericht()
         self.einsortieren()
         self.benennen()
         self.neue_transkripte(bis)
