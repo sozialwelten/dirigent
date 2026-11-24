@@ -366,6 +366,11 @@ class Dirigent:
     def kursaufnahmen(self, ende):
         """Je Aufnahme der Reihe nach: transkribieren, verkleinern, archivieren. Ein begonnener Schritt wird fertig."""
         beginn = time.monotonic()
+        if not os.path.ismount(self.archiv_platte):
+            # Ohne Archivplatte fehlen die Prüfsummen, an denen die kleinen Fassungen in video/ zu erkennen sind.
+            # Sie sähen dann wie Originale aus und würden ein zweites Mal verkleinert (so geschehen am 24.11.2026).
+            self.log(f"  Archivplatte {self.archiv_platte} nicht eingehängt, Kursaufnahmen ausgelassen")
+            return 0, time.monotonic() - beginn
         self.benennen()
         for aufnahme in self.aufnahmen():
             for schritt in ("transkript", "klein", "archiv"):
@@ -396,6 +401,8 @@ class Dirigent:
         self.zustand(pid=os.getpid(), beginn=datetime.now().isoformat(timespec="seconds"),
                      bis=bis.isoformat(timespec="minutes"), aufgabe="", seit="", block_bis="")
         self.log(f"===== Dirigent, bis {bis:%H:%M}")
+        if not os.path.ismount(self.archiv_platte):
+            self.log(f"  Achtung: Archivplatte {self.archiv_platte} nicht eingehängt, Kursaufnahmen werden ausgelassen")
         self.einsortieren()
         self.benennen()
         self.neue_transkripte(bis)
@@ -467,6 +474,9 @@ def befehl_start(dirigent, args):
         subprocess.Popen(befehl, cwd=PROJEKT, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                          start_new_session=True, env=dict(os.environ, PYTHONUNBUFFERED="1"))
     print(f"Dirigent gestartet, bis {bis}. Stand: dirigent stand, Log: dirigent log, Anhalten: dirigent stopp")
+    if not os.path.ismount(dirigent.archiv_platte):
+        print(f"Achtung: Archivplatte {dirigent.archiv_platte} nicht eingehängt, Kursaufnahmen werden ausgelassen.\n"
+              f"Gehäuse aus- und wieder einschalten, dann: sudo mount {dirigent.archiv_platte}")
 
 
 def befehl_lauf(dirigent, args):
