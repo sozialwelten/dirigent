@@ -28,6 +28,9 @@ noscribe = "/home/apollon/opt/noScribe"
 noscribe_optionen = ["--language", "de", "--model", "precise", "--speaker-detection", "auto",
                      "--overlapping", "--timestamps", "--disfluencies", "--pause", "1sec+"]
 
+[nachricht]
+aktiv = true                           # am Ende jedes Laufs ein kurzer Bericht als Direktnachricht, über lesesaal/nachricht.py
+
 [aufgaben]
 # Reihenfolge im Wechsel; eine Aufgabe ohne offene Arbeit wird übersprungen
 reihe = ["abschrift", "anreicherung", "aufarbeitung", "kursaufnahmen"]

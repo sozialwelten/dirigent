@@ -95,6 +95,9 @@ class Dirigent:
         self.noscribe_optionen = list(kurs.get("noscribe_optionen", []))
         self.kursplan_pfad = Path(kurs["kursplan"]) if kurs.get("kursplan") else None
         self.nachlauf = timedelta(minutes=int(konf["zeit"].get("nachlauf_minuten", 15)))
+        # für den Bericht am Ende eines Laufs
+        self.bloecke = []      # (Aufgabe, Sekunden)
+        self.vorfaelle = []    # beendete Schritte, Exit-Codes ungleich 0, Warnungen
 
     # Hilfen
 
@@ -150,6 +153,7 @@ class Dirigent:
                     break
         minuten = self.nachlauf.total_seconds() / 60
         self.log(f"  {name} überzieht die Grenze um mehr als {minuten:.0f} min und wird beendet")
+        self.vorfaelle.append(f"{name} um {datetime.now():%H:%M} beendet, Grenze {grenze - self.nachlauf:%H:%M} überzogen")
         datei.write(f"\n===== {datetime.now():%d.%m.%Y %H:%M} vom Dirigenten beendet, "
                     f"Grenze {grenze:%H:%M} überschritten\n")
         datei.flush()
@@ -237,6 +241,9 @@ class Dirigent:
         code, sek = self.aufgabe_ausfuehren(
             "lesesaal", [self.python(self.lesesaal), "tagesbetrieb.py", "--ohne-archiv"], self.lesesaal, frist=bis)
         self.log(f"  Lesesaal fertig nach {sek / 60:.0f} min, Exit-Code {code}")
+        self.bloecke.append(("lesesaal", sek))
+        if code:
+            self.vorfaelle.append(f"lesesaal Exit-Code {code} ({datetime.now():%H:%M})")
 
     def fuehre(self, name, ende):
         minuten = max(1, int((ende - datetime.now()).total_seconds() // 60))
@@ -261,6 +268,9 @@ class Dirigent:
             self.log(f"  unbekannte Aufgabe {name}, übersprungen")
             return 0.0
         self.log(f"  {name} fertig nach {sek / 60:.0f} min, Exit-Code {code}")
+        self.bloecke.append((name, sek))
+        if code:
+            self.vorfaelle.append(f"{name} Exit-Code {code} ({datetime.now():%H:%M})")
         return sek
 
     # Namen nach dem Kursplan
@@ -474,21 +484,76 @@ class Dirigent:
         for zeile in zeilen:
             self.log(f"  Bestandsbericht: {zeile}")
 
+    def platz(self):
+        """Freier Platz auf Daten- und Archivplatte, als kurze Zeile."""
+        teile = []
+        for name, pfad in (("Daten", self.daten), ("Archiv", self.archiv_platte)):
+            if name == "Archiv" and not os.path.ismount(pfad):
+                teile.append("Archiv nicht eingehängt")
+                continue
+            try:
+                frei = shutil.disk_usage(pfad).free / 1e9
+            except OSError:
+                continue
+            teile.append(f"{name} {frei:,.0f} GB frei".replace(",", "."))
+        return ", ".join(teile)
+
+    def tagesbericht(self, beginn, grund, vorher):
+        """Kurzer Bericht über den Lauf als Direktnachricht, über nachricht.py des Lesesaals.
+
+        Abschalten mit [nachricht] aktiv = false. Ein Fehler beim Senden hält nichts auf."""
+        if not self.konf.get("nachricht", {}).get("aktiv", True):
+            return
+        zeilen = [f"Dirigent {beginn:%d.%m.} {beginn:%H:%M} bis {datetime.now():%H:%M}, {grund}"]
+        je = {}
+        for name, sek in self.bloecke:
+            anzahl, summe = je.get(name, (0, 0))
+            je[name] = (anzahl + 1, summe + sek)
+        if je:
+            zeilen.append("Blöcke: " + ", ".join(
+                f"{name} {anzahl}× {summe / 60:.0f} min" if anzahl > 1 else f"{name} {summe / 60:.0f} min"
+                for name, (anzahl, summe) in je.items()))
+        nachher = {name: self.offen(name) for name in vorher}
+        zeilen.append("Offen:")
+        for name in vorher:
+            a, b = vorher[name], nachher[name]
+            zeilen.append(f"- {name} {'?' if a is None else a} → {'?' if b is None else b}")
+        if self.vorfaelle:
+            zeilen.append("Vorfälle:")
+            zeilen += [f"- {v}" for v in self.vorfaelle[:6]]
+            if len(self.vorfaelle) > 6:
+                zeilen.append(f"- und {len(self.vorfaelle) - 6} weitere, siehe Protokoll")
+        else:
+            zeilen.append("Keine Vorfälle.")
+        zeilen.append(self.platz())
+        text = "\n".join(zeilen)
+        try:
+            erg = subprocess.run([self.python(self.lesesaal), "nachricht.py", "--kennung",
+                                  f"dirigent-{beginn:%Y%m%d%H%M}"], cwd=self.lesesaal, input=text,
+                                 capture_output=True, text=True, timeout=120)
+            meldung = (erg.stdout + erg.stderr).strip().splitlines()
+            self.log(f"  Bericht: {meldung[-1] if meldung else f'Exit-Code {erg.returncode}'}")
+        except (OSError, subprocess.TimeoutExpired) as fehler:
+            self.log(f"  Bericht fehlgeschlagen: {fehler}")
+
     def lauf(self, bis, ohne_lesesaal):
+        beginn = datetime.now()
         self.stoppdatei.unlink(missing_ok=True)
         self.zustand(pid=os.getpid(), beginn=datetime.now().isoformat(timespec="seconds"),
                      bis=bis.isoformat(timespec="minutes"), aufgabe="", seit="", block_bis="")
         self.log(f"===== Dirigent, bis {bis:%H:%M}")
         if not os.path.ismount(self.archiv_platte):
             self.log(f"  Achtung: Archivplatte {self.archiv_platte} nicht eingehängt, Kursaufnahmen werden ausgelassen")
+            self.vorfaelle.append("Archivplatte beim Start nicht eingehängt")
         self.bestandsbericht()
+        reihe = self.konf["aufgaben"]["reihe"]
+        vorher = {name: self.offen(name) for name in reihe}
         self.einsortieren()
         self.benennen()
         self.neue_transkripte(bis)
         if not ohne_lesesaal and not self.gestoppt() and datetime.now() < bis:
             self.lesesaal_tagesbetrieb(bis)
         block = timedelta(minutes=int(self.konf["zeit"].get("block_minuten", 90)))
-        reihe = self.konf["aufgaben"]["reihe"]
         ohne_fortschritt = 0
         while not self.gestoppt() and datetime.now() < bis:
             gearbeitet, lange = False, False
@@ -511,6 +576,7 @@ class Dirigent:
                 break
         grund = "Stoppsignal" if self.gestoppt() else ("Uhrzeit erreicht" if datetime.now() >= bis else "fertig")
         self.log(f"===== Ende ({grund})")
+        self.tagesbericht(beginn, grund, vorher)
         self.zustand(aufgabe="", seit="", block_bis="", ende=datetime.now().isoformat(timespec="seconds"))
         self.stoppdatei.unlink(missing_ok=True)
 

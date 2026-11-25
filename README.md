@@ -44,6 +44,10 @@ dirigent.py umbenennen           archivierte Kursaufnahmen nach dem Kursplan ben
 
 Der Lauf geht weiter, wenn das Terminal geschlossen wird. Die Zeilen des Dirigenten stehen in `DATEN/dirigent.log`, die Ausgaben der Aufgaben je Tag und Aufgabe in `DATEN/logs/`.
 
+## Bericht am Ende eines Laufs
+
+Am Ende jedes Laufs schickt der Dirigent einen kurzen Bericht als Direktnachricht, über `nachricht.py` des Lesesaals und dessen Konto. Darin stehen die Blöcke mit ihrer Dauer, was je Aufgabe vorher und nachher offen war, Vorfälle wie beendete Schritte, Exit-Codes ungleich 0 oder eine fehlende Archivplatte, und der freie Platz auf Daten- und Archivplatte. So lässt sich ein Lauf verfolgen, ohne vor dem Rechner zu sitzen. Abschalten mit `[nachricht] aktiv = false`.
+
 ## Voraussetzungen
 
 Python 3.11 oder neuer, nur die Standardbibliothek. Lesesaal und Zettelkasten mit ihren eigenen `.venv`, noScribe ab Version 0.7 (Kommandozeile mit `--no-gui`), ffmpeg mit `hevc_nvenc`. Pfade, Uhrzeit, Blocklänge und Reihenfolge stehen in `config.toml`.
