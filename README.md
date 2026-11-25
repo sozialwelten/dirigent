@@ -10,6 +10,7 @@ Der Code ist mit Hilfe eines KI-Assistenten entstanden und wird von Hand geteste
 - **Eine Arbeit nach der anderen.** Die Aufgaben teilen sich die Grafikkarten und laufen nie gleichzeitig. Jede nutzt ihre eigene Sperre, Stoppdatei und Temperaturpause.
 - **Anhalten an sicheren Stellen.** Ein Stoppsignal lässt den laufenden Schritt fertig werden, danach beginnt nichts Neues.
 - **Feste Uhrzeit als Sicherung.** Ab `[zeit] bis` beginnt keine neue Aufgabe mehr, damit abends die Grafikkarten frei sind und nachts nichts läuft.
+- **Hängende Schritte beenden.** Überzieht ein Schritt seine Grenze (das Blockende, beim Lesesaal-Tagesbetrieb `[zeit] bis`) um mehr als `[zeit] nachlauf_minuten`, beendet der Dirigent ihn samt Unterprozessen: erst SIGINT, nach je einer Minute SIGTERM und SIGKILL. Die Programme machen beim nächsten Block dort weiter, wo ihr Stand steht. Kursaufnahmen haben keine solche Grenze.
 
 ## Ablauf
 
