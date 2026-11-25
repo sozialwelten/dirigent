@@ -6,6 +6,7 @@ daten = "/mnt/daten/dirigent"          # Zustand, Log und Stoppdatei des Dirigen
 [zeit]
 bis = "17:30"                          # ab dieser Uhrzeit beginnt keine neue Aufgabe mehr
 block_minuten = 90                     # so lange arbeitet eine Aufgabe, bevor die nächste drankommt
+nachlauf_minuten = 15                  # überzieht ein Schritt seine Grenze um mehr, beendet ihn der Dirigent
 
 [lesesaal]
 ordner = "/home/apollon/Arbeitsmappe_Lokal/Code/lesesaal"

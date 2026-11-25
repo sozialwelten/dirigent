@@ -27,6 +27,12 @@ Ablauf eines Laufs:
      Eine Aufgabe ohne offene Arbeit wird übersprungen. Sind alle leer, endet der Lauf.
   4. Ab [zeit] bis beginnt nichts Neues mehr. Der laufende Schritt wird noch fertig.
 
+Überzogene Blöcke: Abschrift, Anreicherung und Aufarbeitung enden normalerweise selbst an der
+Blockgrenze, der Lesesaal-Tagesbetrieb vor [zeit] bis. Hängt ein Schritt und überzieht seine
+Grenze um mehr als [zeit] nachlauf_minuten, beendet ihn der Dirigent samt aller Unterprozesse:
+erst SIGINT, nach je einer Minute SIGTERM und SIGKILL. Die Programme setzen beim nächsten
+Block dort fort, wo ihr Stand steht. Kursaufnahmen haben keine solche Grenze.
+
 Der Dirigent fährt den Rechner nie herunter und startet nichts von selbst. Jede Aufgabe
 nutzt ihre eigene Sperre, Stoppdatei und Temperaturpause. Die Ausgaben der Aufgaben landen
 je Tag und Aufgabe unter DATEN/logs/, die Zeilen des Dirigenten in DATEN/dirigent.log.
@@ -40,6 +46,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -87,6 +94,7 @@ class Dirigent:
         self.noscribe = Path(kurs["noscribe"])
         self.noscribe_optionen = list(kurs.get("noscribe_optionen", []))
         self.kursplan_pfad = Path(kurs["kursplan"]) if kurs.get("kursplan") else None
+        self.nachlauf = timedelta(minutes=int(konf["zeit"].get("nachlauf_minuten", 15)))
 
     # Hilfen
 
@@ -114,17 +122,56 @@ class Dirigent:
         except (OSError, subprocess.SubprocessError) as fehler:
             return f"FEHLER {fehler}"
 
-    def aufgabe_ausfuehren(self, name, befehl, ordner):
-        """Langer Aufruf; Ausgabe ins Tageslog der Aufgabe. Gibt (Exit-Code, Sekunden) zurück."""
+    def aufgabe_ausfuehren(self, name, befehl, ordner, frist=None):
+        """Langer Aufruf; Ausgabe ins Tageslog der Aufgabe. Gibt (Exit-Code, Sekunden) zurück.
+
+        Mit frist wird der Aufruf beendet, wenn er frist plus nachlauf überschreitet. Er läuft dafür
+        in einer eigenen Prozessgruppe, damit auch Unterprozesse wie lftp oder ffmpeg mit enden."""
         log = self.daten / "logs" / f"{datetime.now():%Y-%m-%d}_{name}.log"
         beginn = time.monotonic()
         with open(log, "a", encoding="utf-8") as datei:
             datei.write(f"\n===== {datetime.now():%d.%m.%Y %H:%M} {' '.join(befehl)}\n")
             datei.flush()
             prozess = subprocess.Popen(befehl, cwd=ordner, stdout=datei, stderr=subprocess.STDOUT,
-                                       stdin=subprocess.DEVNULL, env=dict(os.environ, PYTHONUNBUFFERED="1"))
-            code = prozess.wait()
+                                       stdin=subprocess.DEVNULL, env=dict(os.environ, PYTHONUNBUFFERED="1"),
+                                       start_new_session=frist is not None)
+            code = self.abwarten(name, prozess, frist + self.nachlauf if frist else None, datei)
         return code, time.monotonic() - beginn
+
+    def abwarten(self, name, prozess, grenze, datei):
+        """Wartet auf den Prozess. Ist die Grenze überschritten, wird seine Prozessgruppe beendet."""
+        if grenze is None:
+            return prozess.wait()
+        while True:
+            try:
+                return prozess.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                if datetime.now() >= grenze:
+                    break
+        minuten = self.nachlauf.total_seconds() / 60
+        self.log(f"  {name} überzieht die Grenze um mehr als {minuten:.0f} min und wird beendet")
+        datei.write(f"\n===== {datetime.now():%d.%m.%Y %H:%M} vom Dirigenten beendet, "
+                    f"Grenze {grenze:%H:%M} überschritten\n")
+        datei.flush()
+        code = None
+        for zeichen in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(prozess.pid, zeichen)
+            except ProcessLookupError:
+                break
+            try:
+                code = prozess.wait(timeout=60)
+                break
+            except subprocess.TimeoutExpired:
+                self.log(f"  {name} reagiert nicht auf {zeichen.name}")
+        if code is None:
+            code = prozess.wait()
+        try:
+            os.killpg(prozess.pid, signal.SIGKILL)  # übrig gebliebene Unterprozesse
+        except ProcessLookupError:
+            pass
+        self.log(f"  {name} beendet mit Exit-Code {code}")
+        return code
 
     # Bestände
 
@@ -184,11 +231,11 @@ class Dirigent:
 
     # Aufgaben
 
-    def lesesaal_tagesbetrieb(self):
+    def lesesaal_tagesbetrieb(self, bis):
         self.zustand(aufgabe="lesesaal", seit=datetime.now().isoformat(timespec="seconds"))
         self.log("Lesesaal-Tagesbetrieb")
         code, sek = self.aufgabe_ausfuehren(
-            "lesesaal", [self.python(self.lesesaal), "tagesbetrieb.py", "--ohne-archiv"], self.lesesaal)
+            "lesesaal", [self.python(self.lesesaal), "tagesbetrieb.py", "--ohne-archiv"], self.lesesaal, frist=bis)
         self.log(f"  Lesesaal fertig nach {sek / 60:.0f} min, Exit-Code {code}")
 
     def fuehre(self, name, ende):
@@ -198,14 +245,16 @@ class Dirigent:
         self.log(f"{name} bis {ende:%H:%M}")
         if name == "abschrift":
             code, sek = self.aufgabe_ausfuehren(
-                name, [self.python(self.zettelkasten), "abschreiben.py", "--minuten", str(minuten)], self.zettelkasten)
+                name, [self.python(self.zettelkasten), "abschreiben.py", "--minuten", str(minuten)], self.zettelkasten,
+                frist=ende)
         elif name == "anreicherung":
             code, sek = self.aufgabe_ausfuehren(
-                name, [self.python(self.zettelkasten), "anreichern.py", "--minuten", str(minuten)], self.zettelkasten)
+                name, [self.python(self.zettelkasten), "anreichern.py", "--minuten", str(minuten)], self.zettelkasten,
+                frist=ende)
         elif name == "aufarbeitung":
             code, sek = self.aufgabe_ausfuehren(
                 name, [self.python(self.lesesaal), "tagesbetrieb.py", "--nur-archiv", "--archiv-bis", f"{ende:%H:%M}"],
-                self.lesesaal)
+                self.lesesaal, frist=ende)
         elif name == "kursaufnahmen":
             code, sek = self.kursaufnahmen(ende)
         else:
@@ -437,7 +486,7 @@ class Dirigent:
         self.benennen()
         self.neue_transkripte(bis)
         if not ohne_lesesaal and not self.gestoppt() and datetime.now() < bis:
-            self.lesesaal_tagesbetrieb()
+            self.lesesaal_tagesbetrieb(bis)
         block = timedelta(minutes=int(self.konf["zeit"].get("block_minuten", 90)))
         reihe = self.konf["aufgaben"]["reihe"]
         ohne_fortschritt = 0
