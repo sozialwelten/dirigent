@@ -34,9 +34,9 @@ aktiv = true                           # am Ende jedes Laufs ein kurzer Bericht 
 [profil]
 aktiv = true                           # am Ende jedes Laufs der Fortschritt als Balken in den Profilfeldern von @lesesaal, über lesesaal/profil.py
 felder = ["abschrift", "anreicherung", "aufarbeitung"]  # höchstens drei, das vierte Feld zeigt den letzten Lauf
-# Gesamtzahl je Aufgabe. Ohne Angabe gilt erledigt plus offen aus der --stand-Ausgabe,
-# sonst der höchste je gesehene Stand (in zustand.json unter „hoechst“).
-gesamt = { abschrift = 13457 }
+# Erledigt und Gesamtzahl kommen aus der --stand-Ausgabe der Programme. Nur wenn sie fehlen, gilt
+# eine Gesamtzahl von hier, etwa gesamt = { abschrift = 13457 }, sonst der höchste je gesehene Stand.
+gesamt = {}
 
 [aufgaben]
 # Reihenfolge im Wechsel; eine Aufgabe ohne offene Arbeit wird übersprungen

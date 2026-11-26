@@ -51,7 +51,7 @@ Am Ende jedes Laufs schickt der Dirigent einen kurzen Bericht als Direktnachrich
 
 ## Fortschritt im Profil
 
-Am Ende jedes Laufs schreibt der Dirigent über `profil.py` des Lesesaals den Stand der großen Arbeiten in die Profilfelder des Lesesaal-Kontos, je Aufgabe aus `[profil] felder` ein Balken wie `█████▒▒▒▒▒ 51 % · 6.581 offen`, dazu im vierten Feld den letzten Lauf. Die Gesamtzahl je Aufgabe kommt aus `[profil] gesamt`, sonst aus erledigt und offen in der `--stand`-Ausgabe des Programms, sonst gilt der höchste je gesehene Stand. Andere Felder im Profil bleiben stehen, solange es insgesamt nicht mehr als vier werden. Das Token des Kontos braucht dafür `write:accounts`. `dirigent.py profil --probe` zeigt die Felder, ohne etwas zu ändern. Abschalten mit `[profil] aktiv = false`.
+Am Ende jedes Laufs schreibt der Dirigent über `profil.py` des Lesesaals den Stand der großen Arbeiten in die Profilfelder des Lesesaal-Kontos, je Aufgabe aus `[profil] felder` ein Balken wie `█████▒▒▒▒▒ 51 % · 6.581 offen`, dazu im vierten Feld den letzten Lauf. Der Anteil ist erledigt durch gesamt, beides aus der `--stand`-Ausgabe des Programms, etwa „13457 Bilder, 6869 abgeschrieben, 6581 offen“. Fehlt dort eine Zahl, gilt `[profil] gesamt` oder der höchste je gesehene Stand. Andere Felder im Profil bleiben stehen, solange es insgesamt nicht mehr als vier werden. Das Token des Kontos braucht dafür `write:accounts`. `dirigent.py profil --probe` zeigt die Felder, ohne etwas zu ändern. Abschalten mit `[profil] aktiv = false`.
 
 ## Voraussetzungen
 

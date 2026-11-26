@@ -193,9 +193,11 @@ class Dirigent:
         return self.zaehlen(name)[0]
 
     def zaehlen(self, name):
-        """(offen, erledigt) einer Aufgabe; was sich nicht feststellen lässt, ist None.
+        """(offen, erledigt, gesamt) einer Aufgabe; was sich nicht feststellen lässt, ist None.
 
-        erledigt gibt es nur, wenn die --stand-Ausgabe des Programms eine Zahl vor „erledigt“ nennt."""
+        offen ist, was die Aufgabe jetzt bearbeiten kann. erledigt und gesamt kommen aus der
+        --stand-Ausgabe, etwa „13457 Bilder, 6869 abgeschrieben, 6581 offen“ oder
+        „26022 Einheiten: 2390 angereichert, 20078 bereit, …“."""
         if name == "abschrift":
             text = self.ausgabe([self.python(self.zettelkasten), "abschreiben.py", "--stand"], self.zettelkasten)
             treffer = re.search(r"(\d+) offen", text)
@@ -206,14 +208,17 @@ class Dirigent:
             text = self.ausgabe([self.python(self.lesesaal), "tagesbetrieb.py", "--stand"], self.lesesaal)
             treffer = re.search(r"Aufarbeitung \(A\): \d+ erledigt, (\d+) offen", text)
         elif name == "kursaufnahmen":
-            return len(self.aufnahmen()), None
+            return len(self.aufnahmen()), None, None
         else:
-            return None, None
+            return None, None, None
+        offen = int(treffer.group(1)) if treffer else None
         if name == "aufarbeitung":
             fertig = re.search(r"Aufarbeitung \(A\): (\d+) erledigt", text)
-        else:
-            fertig = re.search(r"(\d+) erledigt", text)
-        return (int(treffer.group(1)) if treffer else None), (int(fertig.group(1)) if fertig else None)
+            return offen, (int(fertig.group(1)) if fertig else None), \
+                (int(fertig.group(1)) + offen if fertig and offen is not None else None)
+        fertig = re.search(r"(\d+) (?:abgeschrieben|angereichert)", text)
+        gesamt = re.search(r"(\d+) (?:Bilder|Einheiten)\b", text)
+        return offen, (int(fertig.group(1)) if fertig else None), (int(gesamt.group(1)) if gesamt else None)
 
     def archiviert(self, aufnahme):
         return (self.video_archiv / f"{aufnahme.name}.sha256").exists()
@@ -566,17 +571,23 @@ class Dirigent:
         return zeilen
 
     def profil_felder(self, zaehlung, beginn, ende):
-        """Zeilen „Name|Wert“ für profil.py: je Aufgabe aus [profil] felder ein Balken, dazu der letzte Lauf."""
+        """Zeilen „Name|Wert“ für profil.py: je Aufgabe aus [profil] felder ein Balken, dazu der letzte Lauf.
+
+        Der Anteil ist erledigt durch gesamt, „offen“ der Rest. Fehlt eine der beiden Zahlen, gilt
+        [profil] gesamt oder der höchste je gesehene offene Stand."""
         einst = self.konf.get("profil", {})
         gesamt_vorgabe = einst.get("gesamt", {})
         hoechst = self.zustand_lesen().get("hoechst", {})
         zeilen = []
         for name in einst.get("felder", ["abschrift", "anreicherung", "aufarbeitung"])[:3]:
-            offen, erledigt = zaehlung.get(name, (None, None))
+            offen, erledigt, gesamt = zaehlung.get(name, (None, None, None))
             if offen is None:
                 continue
             hoechst[name] = max(hoechst.get(name, 0), offen)
-            gesamt = gesamt_vorgabe.get(name) or (offen + erledigt if erledigt is not None else hoechst[name])
+            if erledigt is not None and gesamt:
+                offen = gesamt - erledigt
+            else:
+                gesamt = gesamt_vorgabe.get(name) or hoechst[name]
             anteil = min(1.0, max(0.0, (gesamt - offen) / gesamt)) if gesamt else 1.0
             voll = round(anteil * 10)
             zeilen.append(f"{name.capitalize()}|{'█' * voll}{'▒' * (10 - voll)} {anteil * 100:.0f} % · "
