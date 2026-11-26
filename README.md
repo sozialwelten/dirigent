@@ -40,13 +40,18 @@ dirigent.py stand                läuft er, was ist dran, was ist offen (auch oh
 dirigent.py stopp                nach dem laufenden Schritt anhalten
 dirigent.py log                  das Log fortlaufend anzeigen
 dirigent.py umbenennen           archivierte Kursaufnahmen nach dem Kursplan benennen (--ausfuehren)
+dirigent.py profil               den Fortschritt jetzt in die Profilfelder schreiben (--probe: nur zeigen)
 ```
 
 Der Lauf geht weiter, wenn das Terminal geschlossen wird. Die Zeilen des Dirigenten stehen in `DATEN/dirigent.log`, die Ausgaben der Aufgaben je Tag und Aufgabe in `DATEN/logs/`.
 
 ## Bericht am Ende eines Laufs
 
-Am Ende jedes Laufs schickt der Dirigent einen kurzen Bericht als Direktnachricht, über `nachricht.py` des Lesesaals und dessen Konto. Darin stehen die Blöcke mit ihrer Dauer, was je Aufgabe vorher und nachher offen war, Vorfälle wie beendete Schritte, Exit-Codes ungleich 0 oder eine fehlende Archivplatte, und der freie Platz auf Daten- und Archivplatte. So lässt sich ein Lauf verfolgen, ohne vor dem Rechner zu sitzen. Abschalten mit `[nachricht] aktiv = false`.
+Am Ende jedes Laufs schickt der Dirigent einen kurzen Bericht als Direktnachricht, über `nachricht.py` des Lesesaals und dessen Konto. Darin stehen die Blöcke mit ihrer Dauer, was je Aufgabe vorher und nachher offen war, Vorfälle wie beendete Schritte, Exit-Codes ungleich 0 oder eine fehlende Archivplatte, und der freie Platz auf Daten- und Archivplatte. So lässt sich ein Lauf verfolgen, ohne vor dem Rechner zu sitzen. Damit der Bericht in eine Nachricht passt, stehen die Vorfälle am Ende. Reicht der Platz nicht, folgt nach den ersten „und N weitere, siehe Protokoll“. Ein Schritt, den der Dirigent beendet hat, erscheint nur einmal, ohne seinen Exit-Code. Abschalten mit `[nachricht] aktiv = false`.
+
+## Fortschritt im Profil
+
+Am Ende jedes Laufs schreibt der Dirigent über `profil.py` des Lesesaals den Stand der großen Arbeiten in die Profilfelder des Lesesaal-Kontos, je Aufgabe aus `[profil] felder` ein Balken wie `█████▒▒▒▒▒ 51 % · 6.581 offen`, dazu im vierten Feld den letzten Lauf. Die Gesamtzahl je Aufgabe kommt aus `[profil] gesamt`, sonst aus erledigt und offen in der `--stand`-Ausgabe des Programms, sonst gilt der höchste je gesehene Stand. Andere Felder im Profil bleiben stehen, solange es insgesamt nicht mehr als vier werden. Das Token des Kontos braucht dafür `write:accounts`. `dirigent.py profil --probe` zeigt die Felder, ohne etwas zu ändern. Abschalten mit `[profil] aktiv = false`.
 
 ## Voraussetzungen
 

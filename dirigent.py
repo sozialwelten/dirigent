@@ -10,6 +10,8 @@ Aufruf:
   dirigent.py log       das Log fortlaufend anzeigen (Strg+C beendet nur die Anzeige)
   dirigent.py umbenennen [--ausfuehren]
                         archivierte Kursaufnahmen nach dem Kursplan benennen (ohne Schalter nur anzeigen)
+  dirigent.py profil [--probe]
+                        den Fortschritt jetzt in die Profilfelder von @lesesaal schreiben (--probe: nur zeigen)
 
 Ablauf eines Laufs:
   1. Neue Kursaufnahmen nach dem Kursplan benennen (Datum_Fach_Dozent) und mit noScribe transkribieren (ohne Fenster, Einstellungen aus
@@ -33,6 +35,9 @@ Grenze um mehr als [zeit] nachlauf_minuten, beendet ihn der Dirigent samt aller 
 erst SIGINT, nach je einer Minute SIGTERM und SIGKILL. Die Programme setzen beim nächsten
 Block dort fort, wo ihr Stand steht. Kursaufnahmen haben keine solche Grenze.
 
+Am Ende jedes Laufs: Bericht als Direktnachricht ([nachricht]) und der Fortschritt als Balken
+in den Profilfeldern des Lesesaal-Kontos ([profil]), beides über Skripte des Lesesaals.
+
 Der Dirigent fährt den Rechner nie herunter und startet nichts von selbst. Jede Aufgabe
 nutzt ihre eigene Sperre, Stoppdatei und Temperaturpause. Die Ausgaben der Aufgaben landen
 je Tag und Aufgabe unter DATEN/logs/, die Zeilen des Dirigenten in DATEN/dirigent.log.
@@ -55,6 +60,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 PROJEKT = Path(__file__).resolve().parent
+BERICHT_ZEICHEN = 470  # nachricht.py setzt „@konto “ davor und schneidet nach 490 Zeichen ab
 
 
 def lade_konfiguration():
@@ -98,6 +104,7 @@ class Dirigent:
         # für den Bericht am Ende eines Laufs
         self.bloecke = []      # (Aufgabe, Sekunden)
         self.vorfaelle = []    # beendete Schritte, Exit-Codes ungleich 0, Warnungen
+        self.beendet = False   # wurde der letzte Schritt vom Dirigenten beendet?
 
     # Hilfen
 
@@ -132,6 +139,7 @@ class Dirigent:
         in einer eigenen Prozessgruppe, damit auch Unterprozesse wie lftp oder ffmpeg mit enden."""
         log = self.daten / "logs" / f"{datetime.now():%Y-%m-%d}_{name}.log"
         beginn = time.monotonic()
+        self.beendet = False
         with open(log, "a", encoding="utf-8") as datei:
             datei.write(f"\n===== {datetime.now():%d.%m.%Y %H:%M} {' '.join(befehl)}\n")
             datei.flush()
@@ -153,7 +161,8 @@ class Dirigent:
                     break
         minuten = self.nachlauf.total_seconds() / 60
         self.log(f"  {name} überzieht die Grenze um mehr als {minuten:.0f} min und wird beendet")
-        self.vorfaelle.append(f"{name} um {datetime.now():%H:%M} beendet, Grenze {grenze - self.nachlauf:%H:%M} überzogen")
+        self.vorfaelle.append(f"{name} über Grenze {grenze - self.nachlauf:%H:%M}, um {datetime.now():%H:%M} beendet")
+        self.beendet = True
         datei.write(f"\n===== {datetime.now():%d.%m.%Y %H:%M} vom Dirigenten beendet, "
                     f"Grenze {grenze:%H:%M} überschritten\n")
         datei.flush()
@@ -181,6 +190,12 @@ class Dirigent:
 
     def offen(self, name):
         """Wie viel bei einer Aufgabe noch offen ist, oder None, wenn es sich nicht feststellen lässt."""
+        return self.zaehlen(name)[0]
+
+    def zaehlen(self, name):
+        """(offen, erledigt) einer Aufgabe; was sich nicht feststellen lässt, ist None.
+
+        erledigt gibt es nur, wenn die --stand-Ausgabe des Programms eine Zahl vor „erledigt“ nennt."""
         if name == "abschrift":
             text = self.ausgabe([self.python(self.zettelkasten), "abschreiben.py", "--stand"], self.zettelkasten)
             treffer = re.search(r"(\d+) offen", text)
@@ -191,10 +206,14 @@ class Dirigent:
             text = self.ausgabe([self.python(self.lesesaal), "tagesbetrieb.py", "--stand"], self.lesesaal)
             treffer = re.search(r"Aufarbeitung \(A\): \d+ erledigt, (\d+) offen", text)
         elif name == "kursaufnahmen":
-            return len(self.aufnahmen())
+            return len(self.aufnahmen()), None
         else:
-            return None
-        return int(treffer.group(1)) if treffer else None
+            return None, None
+        if name == "aufarbeitung":
+            fertig = re.search(r"Aufarbeitung \(A\): (\d+) erledigt", text)
+        else:
+            fertig = re.search(r"(\d+) erledigt", text)
+        return (int(treffer.group(1)) if treffer else None), (int(fertig.group(1)) if fertig else None)
 
     def archiviert(self, aufnahme):
         return (self.video_archiv / f"{aufnahme.name}.sha256").exists()
@@ -242,7 +261,7 @@ class Dirigent:
             "lesesaal", [self.python(self.lesesaal), "tagesbetrieb.py", "--ohne-archiv"], self.lesesaal, frist=bis)
         self.log(f"  Lesesaal fertig nach {sek / 60:.0f} min, Exit-Code {code}")
         self.bloecke.append(("lesesaal", sek))
-        if code:
+        if code and not self.beendet:
             self.vorfaelle.append(f"lesesaal Exit-Code {code} ({datetime.now():%H:%M})")
 
     def fuehre(self, name, ende):
@@ -269,7 +288,7 @@ class Dirigent:
             return 0.0
         self.log(f"  {name} fertig nach {sek / 60:.0f} min, Exit-Code {code}")
         self.bloecke.append((name, sek))
-        if code:
+        if code and not self.beendet:
             self.vorfaelle.append(f"{name} Exit-Code {code} ({datetime.now():%H:%M})")
         return sek
 
@@ -498,10 +517,12 @@ class Dirigent:
             teile.append(f"{name} {frei:,.0f} GB frei".replace(",", "."))
         return ", ".join(teile)
 
-    def tagesbericht(self, beginn, grund, vorher):
+    def tagesbericht(self, beginn, grund, vorher, nachher):
         """Kurzer Bericht über den Lauf als Direktnachricht, über nachricht.py des Lesesaals.
 
-        Abschalten mit [nachricht] aktiv = false. Ein Fehler beim Senden hält nichts auf."""
+        Die Vorfälle stehen am Ende und werden gekürzt, damit der Bericht in eine Nachricht passt
+        (nachricht.py schneidet nach 490 Zeichen ab). Abschalten mit [nachricht] aktiv = false.
+        Ein Fehler beim Senden hält nichts auf."""
         if not self.konf.get("nachricht", {}).get("aktiv", True):
             return
         zeilen = [f"Dirigent {beginn:%d.%m.} {beginn:%H:%M} bis {datetime.now():%H:%M}, {grund}"]
@@ -511,21 +532,14 @@ class Dirigent:
             je[name] = (anzahl + 1, summe + sek)
         if je:
             zeilen.append("Blöcke: " + ", ".join(
-                f"{name} {anzahl}× {summe / 60:.0f} min" if anzahl > 1 else f"{name} {summe / 60:.0f} min"
+                f"{name} {summe / 60:.0f} min in {anzahl} Blöcken" if anzahl > 1 else f"{name} {summe / 60:.0f} min"
                 for name, (anzahl, summe) in je.items()))
-        nachher = {name: self.offen(name) for name in vorher}
         zeilen.append("Offen:")
         for name in vorher:
-            a, b = vorher[name], nachher[name]
+            a, b = vorher[name], nachher.get(name)
             zeilen.append(f"- {name} {'?' if a is None else a} → {'?' if b is None else b}")
-        if self.vorfaelle:
-            zeilen.append("Vorfälle:")
-            zeilen += [f"- {v}" for v in self.vorfaelle[:6]]
-            if len(self.vorfaelle) > 6:
-                zeilen.append(f"- und {len(self.vorfaelle) - 6} weitere, siehe Protokoll")
-        else:
-            zeilen.append("Keine Vorfälle.")
         zeilen.append(self.platz())
+        zeilen += self.vorfall_zeilen(BERICHT_ZEICHEN - len("\n".join(zeilen)) - 1)
         text = "\n".join(zeilen)
         try:
             erg = subprocess.run([self.python(self.lesesaal), "nachricht.py", "--kennung",
@@ -535,6 +549,61 @@ class Dirigent:
             self.log(f"  Bericht: {meldung[-1] if meldung else f'Exit-Code {erg.returncode}'}")
         except (OSError, subprocess.TimeoutExpired) as fehler:
             self.log(f"  Bericht fehlgeschlagen: {fehler}")
+
+    def vorfall_zeilen(self, platz):
+        """Vorfälle als Zeilen, so viele, wie in platz Zeichen passen; der Rest als „und N weitere“."""
+        if not self.vorfaelle:
+            return ["Keine Vorfälle."]
+        zeilen = ["Vorfälle:"]
+        for nr, vorfall in enumerate(self.vorfaelle):
+            rest = len(self.vorfaelle) - nr - 1
+            reserve = len(f"\n- und {rest} weitere, siehe Protokoll") if rest else 0
+            zeile = f"- {vorfall}"
+            if len("\n".join(zeilen + [zeile])) + reserve > platz:
+                zeilen.append(f"- und {len(self.vorfaelle) - nr} weitere, siehe Protokoll")
+                break
+            zeilen.append(zeile)
+        return zeilen
+
+    def profil_felder(self, zaehlung, beginn, ende):
+        """Zeilen „Name|Wert“ für profil.py: je Aufgabe aus [profil] felder ein Balken, dazu der letzte Lauf."""
+        einst = self.konf.get("profil", {})
+        gesamt_vorgabe = einst.get("gesamt", {})
+        hoechst = self.zustand_lesen().get("hoechst", {})
+        zeilen = []
+        for name in einst.get("felder", ["abschrift", "anreicherung", "aufarbeitung"])[:3]:
+            offen, erledigt = zaehlung.get(name, (None, None))
+            if offen is None:
+                continue
+            hoechst[name] = max(hoechst.get(name, 0), offen)
+            gesamt = gesamt_vorgabe.get(name) or (offen + erledigt if erledigt is not None else hoechst[name])
+            anteil = min(1.0, max(0.0, (gesamt - offen) / gesamt)) if gesamt else 1.0
+            voll = round(anteil * 10)
+            zeilen.append(f"{name.capitalize()}|{'█' * voll}{'▒' * (10 - voll)} {anteil * 100:.0f} % · "
+                          f"{offen:,} offen".replace(",", "."))
+        self.zustand(hoechst=hoechst)
+        zeilen.append(f"Letzter Lauf|{beginn:%d.%m.} {beginn:%H:%M} bis {ende:%H:%M}")
+        return zeilen
+
+    def profil_aktualisieren(self, zaehlung, beginn, ende, probe=False):
+        """Fortschritt in die Profilfelder von @lesesaal, über profil.py des Lesesaals.
+
+        Abschalten mit [profil] aktiv = false. Ein Fehler hält nichts auf."""
+        if not self.konf.get("profil", {}).get("aktiv", True):
+            return
+        text = "\n".join(self.profil_felder(zaehlung, beginn, ende))
+        try:
+            erg = subprocess.run([self.python(self.lesesaal), "profil.py", *(["--probe"] if probe else [])],
+                                 cwd=self.lesesaal, input=text, capture_output=True, text=True, timeout=120)
+            meldung = (erg.stdout + erg.stderr).strip().splitlines()
+            if probe:
+                print("\n".join(meldung))
+            self.log(f"  Profil: {meldung[-1] if meldung else f'Exit-Code {erg.returncode}'}")
+        except (OSError, subprocess.TimeoutExpired) as fehler:
+            self.log(f"  Profil fehlgeschlagen: {fehler}")
+
+    def zustand_lesen(self):
+        return json.loads(self.zustand_pfad.read_text(encoding="utf-8")) if self.zustand_pfad.exists() else {}
 
     def lauf(self, bis, ohne_lesesaal):
         beginn = datetime.now()
@@ -576,7 +645,9 @@ class Dirigent:
                 break
         grund = "Stoppsignal" if self.gestoppt() else ("Uhrzeit erreicht" if datetime.now() >= bis else "fertig")
         self.log(f"===== Ende ({grund})")
-        self.tagesbericht(beginn, grund, vorher)
+        zaehlung = {name: self.zaehlen(name) for name in reihe}
+        self.tagesbericht(beginn, grund, vorher, {name: z[0] for name, z in zaehlung.items()})
+        self.profil_aktualisieren(zaehlung, beginn, datetime.now())
         self.zustand(aufgabe="", seit="", block_bis="", ende=datetime.now().isoformat(timespec="seconds"))
         self.stoppdatei.unlink(missing_ok=True)
 
@@ -678,6 +749,17 @@ def befehl_umbenennen(dirigent, args):
     dirigent.umbenennen_bestand(args.ausfuehren)
 
 
+def befehl_profil(dirigent, args):
+    """Profilfelder jetzt schreiben, mit dem letzten Lauf aus zustand.json."""
+    z = dirigent.zustand_lesen()
+    try:
+        beginn, ende = datetime.fromisoformat(z["beginn"]), datetime.fromisoformat(z["ende"])
+    except (KeyError, ValueError):
+        beginn = ende = datetime.now()
+    zaehlung = {name: dirigent.zaehlen(name) for name in dirigent.konf["aufgaben"]["reihe"]}
+    dirigent.profil_aktualisieren(zaehlung, beginn, ende, probe=args.probe)
+
+
 def befehl_log(dirigent, _args):
     dirigent.log_pfad.touch()
     os.execvp("tail", ["tail", "-n", "30", "-f", str(dirigent.log_pfad)])
@@ -696,10 +778,12 @@ def main():
     unter.add_parser("log", help="das Log fortlaufend anzeigen")
     umb = unter.add_parser("umbenennen", help="archivierte Kursaufnahmen nach dem Kursplan benennen")
     umb.add_argument("--ausfuehren", action="store_true", help="wirklich umbenennen, sonst nur anzeigen")
+    prof = unter.add_parser("profil", help="Fortschritt jetzt in die Profilfelder von @lesesaal schreiben")
+    prof.add_argument("--probe", action="store_true", help="nur zeigen, nichts ändern")
     args = parser.parse_args()
     dirigent = Dirigent(lade_konfiguration())
     {"start": befehl_start, "lauf": befehl_lauf, "stand": befehl_stand, "stopp": befehl_stopp,
-     "log": befehl_log, "umbenennen": befehl_umbenennen, None: befehl_stand}[args.befehl](dirigent, args)
+     "log": befehl_log, "umbenennen": befehl_umbenennen, "profil": befehl_profil, None: befehl_stand}[args.befehl](dirigent, args)
 
 
 if __name__ == "__main__":

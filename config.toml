@@ -31,6 +31,13 @@ noscribe_optionen = ["--language", "de", "--model", "precise", "--speaker-detect
 [nachricht]
 aktiv = true                           # am Ende jedes Laufs ein kurzer Bericht als Direktnachricht, über lesesaal/nachricht.py
 
+[profil]
+aktiv = true                           # am Ende jedes Laufs der Fortschritt als Balken in den Profilfeldern von @lesesaal, über lesesaal/profil.py
+felder = ["abschrift", "anreicherung", "aufarbeitung"]  # höchstens drei, das vierte Feld zeigt den letzten Lauf
+# Gesamtzahl je Aufgabe. Ohne Angabe gilt erledigt plus offen aus der --stand-Ausgabe,
+# sonst der höchste je gesehene Stand (in zustand.json unter „hoechst“).
+gesamt = { abschrift = 13457 }
+
 [aufgaben]
 # Reihenfolge im Wechsel; eine Aufgabe ohne offene Arbeit wird übersprungen
 reihe = ["abschrift", "anreicherung", "aufarbeitung", "kursaufnahmen"]
